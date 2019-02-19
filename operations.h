@@ -3,6 +3,8 @@
 
 #include<type_traits>
 #include<list>
+#include<future>
+#include<unistd.h>
 
 #include"matrix.h"
 
@@ -37,7 +39,7 @@ public:
                 result(i, j) = lhs(i, j) + rhs(i, j);
             }
 		}
-
+        std::cout<< "sum conversion" <<std::endl;
         return result;
     }
 
@@ -63,7 +65,7 @@ public:
     unsigned get_width() const { return matrices.front().get_width(); }
 
     template<typename U, class L, class R>	friend sproxy<U, matrix_ref<U, L>::H, matrix_ref<U, R>::W>    
-    operator+(const matrix_ref<U, L> &lhs, const matrix_ref<U, R> &rhs); //both the cases are freind with the matrix in order to access add method
+    operator+(const matrix_ref<U, L> &lhs, const matrix_ref<U, R> &rhs); //both the cases are friend with the matrix in order to access add method
 
     template<typename U, unsigned h2, unsigned w2, class R> friend sproxy<U, h2, matrix_ref<U, R>::W>
     operator+(sproxy<U, h2, w2> &&lhs, const matrix_ref<U, R> &rhs);
@@ -92,7 +94,8 @@ private:
 
 
     void resolve() { 
-		while (matrices.size() > 2) resolve_one(); 
+		while (matrices.size() > 2) 
+            resolve_one(); 
 	}
 
     void resolve_one() {
@@ -100,12 +103,12 @@ private:
         typename std::list<matrix_wrap<T>>::iterator rhs = lhs;
         rhs++;
         typename std::list<matrix_wrap<T>>::iterator result = matrices.emplace(lhs, matrix<T>(lhs->get_height(), lhs->get_width()));
-		do_sum(*result, *lhs, *rhs);
+		sum(*result, *lhs, *rhs);
 		matrices.erase(lhs);
         matrices.erase(rhs);
     }
 
-    void do_sum(matrix_wrap<T> result, matrix_wrap<T> lhs, matrix_wrap<T> rhs) {
+    void sum(matrix_wrap<T> result, matrix_wrap<T> lhs, matrix_wrap<T> rhs) {
         const unsigned height = lhs.get_height();
         const unsigned width = lhs.get_width();
 		for (unsigned i = 0; i != height; i++){
@@ -117,6 +120,10 @@ private:
     std::list<matrix_wrap<T>> matrices;
 };
 
+/*
+In the previous assignment we permitted to have sum between different types, however here we use a proxy so
+that means that there wouldn't be a omogeneos type in the list of matrices so I decided not to permit sum between different type 
+*/
 
 //Case when a chain of sums begins
 template<typename T, class L, class R>
@@ -150,15 +157,17 @@ operator+(sproxy<T, h, w> &&lhs, const matrix_ref<T, R> &rhs) {
 
 /*
 This is needed when the calculus is performed, it basically returns the result of a matrix operation performed by the implicit conversion 
-redefinition in the operation
+redefinition in the operation, basically is the operation the thread will execute, which force the computation because it will trigger the implicit conversion
+and will return a type matrix<T>!
 */
+
 template<typename T, unsigned h, unsigned w>
-struct util {
-    static matrix<T> produce(sproxy<T, h, w> &&m) {
-        return m;
+struct thread_impl_conv {
+    static matrix<T> compute(sproxy<T, h, w> &&sp) {
+        std::cout<<"Thready here" << std::endl;
+        return sp;
     }
 };
-
 
 /*
 Proxy used for the multiplication precedence and parallel multiplication
@@ -169,102 +178,99 @@ class mproxy {
 	
 	static constexpr unsigned H = h;
 	static constexpr unsigned W = w;
+
+
 	
 	operator matrix<T>() {
 		resolve();
-		matrix_wrap<T> lhs = futures.front().get();
-        const unsigned height = lhs.get_height();
-        const unsigned width = lhs.get_width();
-        matrix<T> result(height, width);
-
-        for (unsigned i = 0; i != height; ++i)
-            for (unsigned j = 0; j != width; ++j) {
-                result(i, j) = lhs(i, j);
-            }
-
-        //std::cerr << "product conversion\n";
-        return result;				
+		matrix_wrap<T> lhs = matrices.front(), rhs=matrices.back();
+		const unsigned height = lhs.get_height();
+		const unsigned width = rhs.get_width();
+		const unsigned span = lhs.get_width();
+		assert(span == rhs.get_height());
+		matrix<T> result(height, width);
+		for (unsigned i = 0; i != height; ++i)
+			for (unsigned j = 0; j != width; ++j) {
+				result(i, j) = 0;
+				for (unsigned k = 0; k != span; ++k) 
+					result(i, j) += lhs(i, k)*rhs(k, j);
+				}
+				
+		std::cerr << "product conversion\n";
+		return result;				
 	}
 	
-	 template<unsigned h2, unsigned w2>
-    operator matrix<T, h2, w2>() {
-        static_assert((h == 0 || h == h2) && (w == 0 || w == w2), "sized product conversion to wrong sized matrix");
-        assert(h2 == get_height() && w2 == get_width());
-        resolve();
-        matrix_wrap<T> lhs = futures.front().get();
-        matrix<T, h2, w2> result;
-        for (unsigned i = 0; i != h2; ++i)
-            for (unsigned j = 0; j != w2; ++j) {
-                result(i, j) = lhs(i, j);
-            }
-
-        //std::cerr << "sized product conversion\n";
-        return result;
-    }
+	template<unsigned h2, unsigned w2>
+	operator matrix<T, h2, w2>() {
+		static_assert((h == 0 || h == h2) && (w == 0 || w == w2), "sized product conversion to wrong sized matrix");
+		assert(h2 == get_height() && w2 == get_width());
+		resolve();
+		matrix_wrap<T> lhs = matrices.front(), rhs = matrices.back();
+		const unsigned span = lhs.get_width();
+		assert(span == rhs.get_height());
+		matrix<T, h2, w2> result;
+		for (unsigned i = 0; i != h2; ++i)
+			for (unsigned j = 0; j != w2; ++j) {
+				result(i, j) = 0;
+				for (unsigned k = 0; k != span; ++k) 
+					result(i, j) += lhs(i, k)*rhs(k, j);
+				}
+		
+		std::cerr << "sized product conversion\n";
+		return result;				
+	}
 	
 	unsigned get_height() const { return matrices.front().get_height(); }
 	unsigned get_width() const { return matrices.back().get_width(); }
 	
 		
-	template<typename U, class L, class R>
-	friend mproxy<U, matrix_ref<U,L>::H, matrix_ref<U,R>::W> 
-	operator * (const matrix_ref<U,L>& lhs, const matrix_ref<U,R>& rhs);
+	template<typename U, class LType, class RType>
+	friend mproxy<U, matrix_ref<U,LType>::H, matrix_ref<U,RType>::W> 
+	operator * (const matrix_ref<U,LType>& lhs, const matrix_ref<U,RType>& rhs);
 	
-	template<typename U, unsigned h2, unsigned w2, class R>
-	friend mproxy<U,h2,matrix_ref<U,R>::W> 
-	operator * (mproxy<U,h2,w2>&& lhs, const matrix_ref<U,R>& rhs);
+	template<typename U, unsigned h2, unsigned w2, class RType>
+	friend mproxy<U,h2,matrix_ref<U,RType>::W> 
+	operator * (mproxy<U,h2,w2>&& lhs, const matrix_ref<U,RType>& rhs);
 
-	//The two new cases are friend too!
-	template<typename U, unsigned h2, unsigned w2, unsigned h3, unsigned w3>
-    friend mproxy<U, h2, w3>
-    operator*(sproxy<U, h2, w2> &&lhs, sproxy<U, h3, w3> &&rhs);
+    //The new cases of multiplication have to be friend too!!
+    template<typename U, unsigned h1, unsigned w1, unsigned h2, unsigned w2>
+    friend mproxy<U, h1, w2>
+    operator * (sproxy<U, h1, w1> &&lhs, sproxy<U, h2, w2> &&rhs);
 
-    template<typename U, unsigned h2, unsigned w2, unsigned h3, unsigned w3>
-    friend mproxy<U, h2, w3>
-    operator*(mproxy<U, h2, w2> &&lhs, sproxy<U, h3, w3> &&rhs);
+    template<typename U, unsigned h1, unsigned w1, unsigned h2, unsigned w2>
+	friend mproxy<U, h1, w2>
+    operator * (mproxy<U, h1, w1> &&lhs, sproxy<U, h2, w2> &&rhs);
 
-	//This is for the problem I highlighted in the previous assignmen
-    template<typename U, unsigned h2, unsigned w2>
+    
+    mproxy(mproxy<T,h,w>&& X) = default;
+	
+	//mproxy must be friend with itself
+    template<typename U, unsigned h1, unsigned w1>
     friend class mproxy;
+
+    private:
 	
-	mproxy(mproxy<T, h, w>&& X) = default;
-	
-	private:
-	
-	mproxy() = default;
+	mproxy() {};
 	
 	template<unsigned w2>
-	mproxy(mproxy<T, h, w2>&& X) : matrices(std::move(X.matrices)), sizes(std::move(X.sizes)) {}
+	mproxy(mproxy<T,h,w2>&& X) : matrices(std::move(X.matrices)), sizes(std::move(X.sizes)) {}
 	
 	template<class matrix_type>
-	void add(matrix_ref<T, matrix_type> mat) {
+	void add(matrix_ref<T,matrix_type> mat) {
 		matrices.emplace_back(mat);
 		sizes.push_back(mat.get_width());
 	}
 	
-	void resolve() {
-        for (auto m: matrices)
-            futures.push_back(std::async(std::launch::async, this, this, m));
-        resolve_one();
-    }
 	
-	//It's a function that recalls itself until the future list contains only one element(all operations performed!)
+	void resolve() { while(matrices.size()>2) resolve_one(); }
 	void resolve_one() {
-		 if (futures.size() == 1) {
-            return;
-        }
-        typename std::list<std::future<matrix_wrap<T>>>::iterator lhs = find_max();
-        typename std::list<std::future<matrix_wrap<T>>>::iterator rhs = lhs;
-        ++rhs;
-        std::shared_future<matrix_wrap<T>> l = lhs->share();
-        std::shared_future<matrix_wrap<T>> r = rhs->share();
-        typename std::list<std::future<matrix_wrap<T>>>::iterator result = futures.emplace(lhs,
-                                                                                           std::future<matrix_wrap<T>>());
-        *result = std::async(std::launch::async, &matrix_product<T, h, w>::myaux, this, l, r);
-
-        futures.erase(lhs);
-        futures.erase(rhs);
-        my_resolve_one();
+		typename std::list<matrix_wrap<T>>::iterator lhs = find_max();
+		typename std::list<matrix_wrap<T>>::iterator rhs = lhs;
+		++rhs;
+		typename std::list<matrix_wrap<T>>::iterator result = matrices.emplace(lhs,matrix<T>(lhs->get_height(),rhs->get_width()));
+		do_multiply(*result,*lhs,*rhs);
+		matrices.erase(lhs);
+		matrices.erase(rhs);
 	}
 	
 	typename std::list<matrix_wrap<T>>::iterator find_max() {
@@ -272,7 +278,7 @@ class mproxy {
 		typename std::list<matrix_wrap<T>>::iterator mat_max = mat_iter;
 		std::vector<unsigned>::iterator size_iter = sizes.begin();
 		std::vector<unsigned>::iterator last = --(sizes.end());
-		unsigned size_max=*size_iter;
+		unsigned size_max = *size_iter;
 		while (size_iter != last) {
 			if(*size_iter > size_max) {
 				size_max = *size_iter;
@@ -296,9 +302,11 @@ class mproxy {
 					result(i, j) += lhs(i, k)*rhs(k, j);
 				}					
 	}
+	
+	
 	std::list<matrix_wrap<T>> matrices;
 	std::vector<unsigned> sizes;
-};	
+};
 	
 template<typename T, class LType, class RType>
 mproxy<T, matrix_ref<T,LType>::H, matrix_ref<T,RType>::W> 
@@ -334,8 +342,8 @@ operator*(sproxy<T, h, w> &&lhs, sproxy<T, h1, w1> &&rhs) {
     if (lhs.get_width() != rhs.get_height())
         throw std::domain_error("Can't do the multiplication with different dimensions!");
     
-	auto f1 = std::async(std::launch::async, util<T, h, w>::produce, std::move(lhs));
-    auto f2 = std::async(std::launch::async, util<T, h1, w1>::produce, std::move(rhs));
+	auto f1 = std::async(std::launch::async, thread_impl_conv<T, h, w>::compute, std::move(lhs));
+    auto f2 = std::async(std::launch::async, thread_impl_conv<T, h1, w1>::compute, std::move(rhs));
 
     matrix<T> A = f1.get();
     matrix<T> B = f2.get();
@@ -354,7 +362,7 @@ operator*(mproxy<T, h, w> &&lhs, sproxy<T, h1, w1> &&rhs) {
     if (lhs.get_width() != rhs.get_height())
         throw std::domain_error("Can't do the multiplication with different dimensions!");
 
-    auto f1 = std::async(std::launch::async, util<T, h1, w1>::produce, std::move(rhs));
+    auto f1 = std::async(std::launch::async, thread_impl_conv<T, h1, w1>::compute, std::move(rhs));
 	matrix<T> A = f1.get();
 
     mproxy<T, h, w1> result(std::move(lhs));
@@ -362,6 +370,6 @@ operator*(mproxy<T, h, w> &&lhs, sproxy<T, h1, w1> &&rhs) {
     return result;
 }
 	
-
+//In order to compile this program on Linux I had to change makefile options and add the -pthread option
 
 #endif // OPERATIONS_H 

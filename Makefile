@@ -1,10 +1,9 @@
 CXXFLAGS = -DNDEBUG
 
-main.exe: main.o
-	g++ main.o -o main.exe
 
-main.o: main.cpp
-	g++ -c main.cpp -o main.o
+main.exe: main.cpp
+	g++ -pthread -std=c++17 main.cpp -o main.exe
+
 
 .PHONY: clean
 
