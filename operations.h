@@ -159,6 +159,7 @@ operator+(sproxy<T, h, w> &&lhs, const matrix_ref<T, R> &rhs) {
 This is needed when the calculus is performed, it basically returns the result of a matrix operation performed by the implicit conversion 
 redefinition in the operation, basically is the operation the thread will execute, which force the computation because it will trigger the implicit conversion
 and will return a type matrix<T>!
+It's a functor
 */
 
 template<typename T, unsigned h, unsigned w>
@@ -361,10 +362,8 @@ operator*(mproxy<T, h, w> &&lhs, sproxy<T, h1, w1> &&rhs) {
     static_assert(w * h1 == 0 || w == h1, "Can't do the multiplication with different dimensions!");
     if (lhs.get_width() != rhs.get_height())
         throw std::domain_error("Can't do the multiplication with different dimensions!");
-
     auto f1 = std::async(std::launch::async, thread_impl_conv<T, h1, w1>::compute, std::move(rhs));
 	matrix<T> A = f1.get();
-
     mproxy<T, h, w1> result(std::move(lhs));
     result.add(A);
     return result;
